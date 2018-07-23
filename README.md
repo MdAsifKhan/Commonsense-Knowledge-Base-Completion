@@ -8,11 +8,11 @@ Here main focus is on commonsense knowledge base. In standard KB each triple is 
 For further detail on methods, evaluation setup and results refer to 
 [report.ipynb](https://github.com/MdAsifKhan/NLP-Project)
 
-#Dataset
+# Dataset
 We use ConceptNet as a representation of commonsense knowledge. All data used in this experiment can be downloaded from: (http://ttic.uchicago.edu/~kgimpel/commonsense.html).
 
 
-#Usage
+# Usage
 The implementation is structured as follows.
 1. ```model.py ```
 
@@ -41,9 +41,9 @@ The scoring of tuple is highly dependent on initial embeddings used for training
 5. ```run_experiment.py```
 main file to evaluate neural network model for commonsense knowledge base completion.
 
-#Requirements
+# Requirements
 1. Pytorch
 2. Python3+
 
-#Comments & Feedback
+# Comments & Feedback
 For any comment or feedback please contact Mohammad Asif Khan via mail.
