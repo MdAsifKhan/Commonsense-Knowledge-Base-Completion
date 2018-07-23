@@ -4,6 +4,7 @@ import random as random
 import torch
 import pdb
 
+
 class preprocess:
 
 	def __init__(self):
@@ -15,6 +16,8 @@ class preprocess:
 		self.word_vec_map = {}
 		self.word_id_map = {}
 		self.embedding_weights = {}
+		self.rel = {}
+		self.n_r = 0
 
 	def read_train_triples(self, filename):
 		self.train_triples = [line.strip().split('\t') for line in open(filename,'r')]
@@ -24,6 +27,11 @@ class preprocess:
 
 	def read_test_triples(self, filename):
 		self.test_triples = [line.strip().split('\t') for line in open(filename,'r')]
+
+	def read_relations(self, filename):
+		self.rel ={line.strip():key+1 for key,line in enumerate(open(filename,'r'))}
+		self.rel['UUUNKKK'] = 0
+		self.n_rel = len(self.rel)
 
 	def embedding_matrix(self):
 		matrix = np.zeros((len(self.embedding_weights), self.embedding_dim))
@@ -50,16 +58,19 @@ class preprocess:
 
 	def sentence2idx(self, sentence):
 		return [self.word_id_map[word] if word in self.word_id_map else self.word_id_map['UUUNKKK'] for word in sentence]
-			
+	
+	def rel2idx(self, rel):
+		return self.rel[rel.lower()] if rel.lower() in self.rel.keys() else self.rel['UUUNKKK'] 
+
 	def	triple_to_index(self, triples, dev=False):
 		triple2idx = []
 		for triple in triples:
 			if dev:
-				p, s, o, label = triple[0].split(' '), triple[1].split(' '), triple[2].split(' '), int(triple[3])
-				triple2idx.append([self.sentence2idx(p),self.sentence2idx(s),self.sentence2idx(o), label])
+				p, s, o, label = triple[0], triple[1].split(' '), triple[2].split(' '), int(triple[3])
+				triple2idx.append([self.rel2idx(p),self.sentence2idx(s),self.sentence2idx(o), label])
 			else:
-				p, s, o = triple[0].split(' '), triple[1].split(' '), triple[2].split(' ')
-				triple2idx.append([self.sentence2idx(p),self.sentence2idx(s),self.sentence2idx(o)])
+				p, s, o = triple[0], triple[1].split(' '), triple[2].split(' ')
+				triple2idx.append([self.rel2idx(p),self.sentence2idx(s),self.sentence2idx(o)])
 		return triple2idx			
 
 	def get_max_len(self, tripleidx):
@@ -106,22 +117,37 @@ class TripleDataset(Dataset):
 		return self.len
 
 def stats(values):
-    return '{0:.4f} ± {1:.4f}'.format(round(np.mean(values), 4), round(np.std(values), 4))
+    return '{0:.4f} +/- {1:.4f}'.format(round(np.mean(values.numpy()), 4), round(np.std(values.numpy()), 4))
 
 def sample_negatives(data, type='RAND',sampling_factor=10):
 	s_data, o_data, p_data = data[0], data[1], data[2]
 	data_len = len(s_data)
-	neg_s_data = []
-	neg_o_data = []
-	neg_p_data = []
+	corrupt_s, corrupt_o = [], []
+	true_s, true_o, true_p = [], [], []
 	while(sampling_factor):
-		for i in range(len(s_data)):
+		for i in range(data_len):
 			idx_s = random.randint(0,data_len-1)
+			
+			while i == idx_s: idx_s = random.randint(0,data_len-1)			
+			corrupt_s.append(s_data[idx_s].numpy())
+			true_s.append(s_data[i].numpy())
+
 			idx_o = random.randint(0,data_len-1)
-			idx_p = random.randint(0,data_len-1)
-			if idx_s != idx_o:
-				neg_s_data.append(s_data[idx_s].numpy())
-				neg_o_data.append(o_data[idx_o].numpy())
-				neg_p_data.append(p_data[idx_p].numpy())
+			
+			while i == idx_o: idx_o = random.randint(0,data_len-1)			
+			corrupt_o.append(o_data[idx_o].numpy())
+			true_o.append(o_data[i].numpy())
+			true_p.append(p_data[i].numpy())
+
 		sampling_factor -= 1
-	return torch.from_numpy(np.array(neg_s_data)), torch.from_numpy(np.array(neg_o_data)), torch.from_numpy(np.array(neg_p_data))
+	corrupt_s = np.array(corrupt_s)
+	corrupt_o = np.array(corrupt_o)
+	true_s = np.array(true_s)
+	true_o = np.array(true_o)
+	true_p = np.array(true_p)
+
+	negative_s = np.vstack([corrupt_s, true_s])
+	negative_o = np.vstack([true_o, corrupt_o])
+	negative_p = np.concatenate((true_p, true_p))
+
+	return torch.from_numpy(negative_s), torch.from_numpy(negative_o), torch.from_numpy(negative_p)
