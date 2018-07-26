@@ -5,10 +5,196 @@ import torch.nn as nn
 import pdb
 import numpy as np
 from torch.nn.init import xavier_normal_, xavier_uniform_
+import random
 
-class DistMult(torch.nn.Module):
+# Base Class
+
+class Model(torch.nn.Module):
+
+    def __init__(self, gpu=False):
+        super(Model, self).__init__()
+        self.gpu = gpu
+        self.BCEloss = torch.nn.BCELoss()
+        self.LW = 1e-3
+
+    def bilinear_initialization(self):
+        #Initialize relation matrix
+
+        Rel_init = np.zeros((self.n_r,self.embedding_rel_dim,self.embedding_rel_dim))
+        for k in range(self.n_r):
+            for i in range(self.embedding_rel_dim):
+                for j in range(self.embedding_rel_dim):
+                    if(i==j):
+                        Rel_init[k][i][j] = 1+random.uniform(-0.2,0.2)
+                    else:
+                        Rel_init[k][i][j] = random.uniform(-0.2,0.2)
+        Rel_init = Rel_init.reshape(-1, self.embedding_rel_dim**2)
+        return Rel_init
+
+    def normalize_embeddings(self):
+        for e in self.embeddings:
+            e.weight.data.renorm_(p=2, dim=0, maxnorm=1)
+
+    def bce_loss(self, y_pred, y_true, average=True):
+        
+        norm_word = torch.norm(self.embed_words.weight, 2, 1)
+        norm_rel = torch.norm(self.embed_rel.weight, 2, 1)
+        y_true = Variable(torch.from_numpy(y_true.astype(np.float32)).cuda()) if self.gpu else Variable(torch.from_numpy(y_true.astype(np.float32)))
+        y_pred = F.sigmoid(y_pred)
+        loss = self.BCEloss(y_pred, y_true)
+        # Penalize when embeddings norms larger than one
+        nlp1 = torch.sum(torch.clamp(norm_word - 1, min=0))
+        nlp2 = torch.sum(torch.clamp(norm_rel - 1, min=0))
+        if average:
+            nlp1 /= norm_word.size(0)
+            nlp2 /= norm_rel.size(0)
+
+        return loss + self.LW*nlp1 + self.LW*nlp2
+
+    def predict_proba(self, pred_score):
+        pred_score = pred_score.view(-1, 1)
+        pred_prob = F.sigmoid(pred_score)
+        return pred_prob.cpu().data.numpy() if self.gpu else pred_prob.data.numpy()
+
+
+# Bilinear RESCAL Model
+class BilinearModel(Model):
+
     def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, lw, batch_size, input_dropout=0.2, gpu=True):
-        super(DistMult, self).__init__()
+        super(BilinearModel, self).__init__(gpu)
+        self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
+        self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim**2, padding_idx=0)
+        
+        self.batch_size = batch_size
+        self.embedding_rel_dim = embedding_rel_dim
+        self.embedding_dim = embedding_dim
+        self.n_r = n_r
+        
+        self.inp_drop = torch.nn.Dropout(input_dropout)
+        self.gpu = gpu
+        self.LW = lw
+        self.transform_term = nn.Sequential(
+            nn.Linear(embedding_dim, embedding_rel_dim),
+            nn.Tanh(),
+        )
+        self.init(weights)
+
+        if self.gpu:
+            self.cuda()
+
+    def init(self, weights):
+        self.embed_words.weight.data.copy_(torch.from_numpy(weights))
+        rel_mat = self.bilinear_initialization()
+        self.embed_rel.weight.data.copy_(torch.from_numpy(rel_mat))
+        # xavier_normal_(self.embed_rel.weight.data)
+        # Xavier init
+        for p in self.transform_term.modules():
+            if isinstance(p, nn.Linear):
+                in_dim = p.weight.size(0)
+                p.weight.data.normal_(0, 1/np.sqrt(in_dim/2))
+
+    def forward(self, s, o, p):
+        freq_s = Variable(torch.from_numpy(s.astype(bool).sum(axis=1)).type(torch.FloatTensor), requires_grad=False)
+        freq_o = Variable(torch.from_numpy(o.astype(bool).sum(axis=1)).type(torch.FloatTensor), requires_grad=False)
+        freq_s = freq_s.cuda() if self.gpu else freq_s
+        freq_o = freq_o.cuda() if self.gpu else freq_o
+
+        s = Variable(torch.from_numpy(s)).long()
+        s = s.cuda() if self.gpu else s
+        
+        o = Variable(torch.from_numpy(o)).long()
+        o = s.cuda() if self.gpu else o
+        
+        p = Variable(torch.from_numpy(p)).long()
+        p = p.cuda() if self.gpu else p
+        
+        s_embedded = self.embed_words(s).sum(dim=1)
+        s_embedded = s_embedded.mul(freq_s.unsqueeze(1))
+        o_embedded = self.embed_words(o).sum(dim=1)
+        o_embedded = o_embedded.mul(freq_o.unsqueeze(1))
+
+        s_embedded = self.transform_term(s_embedded)
+        o_embedded = self.transform_term(o_embedded)
+
+        s_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
+        o_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
+
+        p_embedded = self.embed_rel(p).view(-1, self.embedding_rel_dim, self.embedding_rel_dim)
+
+        pred = torch.bmm(torch.transpose(s_embedded,1,2), p_embedded)
+        pred = torch.bmm(pred, o_embedded)
+        pred = pred.view(-1, 1)
+
+        return pred
+
+
+class LSTM_BilinearModel(Model):
+    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, batch_size, input_dropout=0.2, gpu=True):
+        super(LSTM_BilinearModel, self).__init__(gpu)
+        self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
+        self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim**2, padding_idx=0)
+        self.batch_size = batch_size
+        self.embedding_rel_dim = embedding_rel_dim
+        self.lstm = nn.LSTM(embedding_dim, self.embedding_rel_dim)
+        
+        self.inp_drop = torch.nn.Dropout(input_dropout)
+        self.loss = torch.nn.BCELoss()
+        self.init(weights)
+        self.gpu = gpu
+        if self.gpu:
+            self.cuda()
+
+    def init(self, weights):
+        self.embed_words.weight.data.copy_(torch.from_numpy(weights))
+        rel_mat = self.bilinear_initialization()
+        self.embed_rel.weight.data.copy_(torch.from_numpy(rel_mat))
+        self.hidden = self.init_hidden()
+
+    def init_hidden(self):
+        # the first is the hidden h
+        # the second is the cell  c
+        h = Variable(torch.zeros(1, self.batch_size, self.embedding_rel_dim))
+        h = h.cuda() if self.gpu else h
+        c = Variable(torch.zeros(1, self.batch_size, self.embedding_rel_dim))
+        c = c.cuda() if self.gpu else c
+
+        return (h, c)
+
+    def forward(self, s, o, p):
+        s = Variable(torch.from_numpy(s)).long()
+        s = s.cuda() if self.gpu else s
+        
+        o = Variable(torch.from_numpy(o)).long()
+        o = s.cuda() if self.gpu else o
+        
+        p = Variable(torch.from_numpy(p)).long()
+        p = p.cuda() if self.gpu else p
+        
+        s_embedded = self.embed_words(s)
+        o_embedded = self.embed_words(o)
+        p_embedded = self.embed_rel(p)
+
+        lstm_s_out, self.hidden = self.lstm(s_embedded, self.hidden)
+        lstm_o_out, self.hidden = self.lstm(o_embedded, self.hidden)
+        
+        s_embedded = lstm_s_out[-1]
+        o_embedded = lstm_s_out[-1]
+
+        s_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
+        o_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
+
+        p_embedded = self.embed_rel(p).view(-1, self.embedding_rel_dim, self.embedding_rel_dim)
+
+        pred = torch.bmm(torch.transpose(s_embedded,1,2), p_embedded)
+        pred = torch.bmm(pred, o_embedded)
+        pred = pred.view(-1, 1)
+
+        return pred
+
+
+class Avg_DistMult(Model):
+    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, lw, batch_size, input_dropout=0.2, gpu=True):
+        super(Avg_DistMult, self).__init__(gpu)
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
         self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim, padding_idx=0)
         self.batch_size = batch_size
@@ -33,10 +219,6 @@ class DistMult(torch.nn.Module):
             if isinstance(p, nn.Linear):
                 in_dim = p.weight.size(0)
                 p.weight.data.normal_(0, 1/np.sqrt(in_dim/2))
-
-    def normalize_embeddings(self):
-        for e in self.embeddings:
-            e.weight.data.renorm_(p=2, dim=0, maxnorm=1)
 
     def forward(self, s, o, p):
         freq_s = Variable(torch.from_numpy(s.astype(bool).sum(axis=1)).type(torch.FloatTensor), requires_grad=False)
@@ -65,37 +247,18 @@ class DistMult(torch.nn.Module):
         o_embedded = self.inp_drop(o_embedded)
         p_embedded = self.inp_drop(p_embedded)
         pred = torch.sum(s_embedded * p_embedded * o_embedded, 1)
+        
         return pred
 
-    def log_loss(self, y_pred, y_true, average=True):
-        
-        norm_word = torch.norm(self.embed_words.weight, 2, 1)
-        norm_rel = torch.norm(self.embed_rel.weight, 2, 1)
-        loss = self.loss(y_pred, y_true)
-        # Penalize when embeddings norms larger than one
-        nlp1 = torch.sum(torch.clamp(norm_word - 1, min=0))
-        nlp2 = torch.sum(torch.clamp(norm_rel - 1, min=0))
-        if average:
-            nlp1 /= norm_word.size(0)
-            nlp2 /= norm_rel.size(0)
 
-        return loss + self.LW*nlp1 + self.LW*nlp2
-
-    def predict(self, score, sigmoid=False):
-        pred_score = score.view(-1, 1)
-        if sigmoid:
-            pred_prob = F.sigmoid(pred_score)
-        return pred_prob.cpu().data.numpy() if self.gpu else pred_prob.data.numpy()
-
-class LSTM_DistMult(torch.nn.Module):
-    def __init__(self, embedding_dim, lstm_dim, weights, n_r, batch_size, input_dropout=0.2, gpu=True):
-        super(DistMult, self).__init__()
+class LSTM_DistMult(Model):
+    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, batch_size, input_dropout=0.2, gpu=True):
+        super(LSTM_DistMult, self).__init__(gpu)
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
-        self.embed_rel = torch.nn.Embedding(n_r, embedding_dim, padding_idx=0)
+        self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim, padding_idx=0)
         self.batch_size = batch_size
-        self.lstm_dim = lstm_dim
-        self.lstm_s = nn.LSTM(embedding_dim, self.lstm_dim)
-        self.lstm_o = nn.LSTM(embedding_dim, self.lstm_dim)
+        self.embedding_rel_dim = embedding_rel_dim
+        self.lstm = nn.LSTM(embedding_dim, self.embedding_rel_dim)
         
         self.inp_drop = torch.nn.Dropout(input_dropout)
         self.loss = torch.nn.BCELoss()
@@ -112,9 +275,9 @@ class LSTM_DistMult(torch.nn.Module):
     def init_hidden(self):
         # the first is the hidden h
         # the second is the cell  c
-        h = Variable(torch.zeros(1, self.batch_size, self.lstm_dim))
+        h = Variable(torch.zeros(1, self.batch_size, self.embedding_rel_dim))
         h = h.cuda() if self.gpu else h
-        c = Variable(torch.zeros(1, self.batch_size, self.lstm_dim))
+        c = Variable(torch.zeros(1, self.batch_size, self.embedding_rel_dim))
         c = c.cuda() if self.gpu else c
 
         return (h, c)
@@ -133,8 +296,8 @@ class LSTM_DistMult(torch.nn.Module):
         o_embedded = self.embed_words(o)
         p_embedded = self.embed_rel(p)
 
-        lstm_s_out, self.hidden = self.lstm_s(s_embedded, self.hidden)
-        lstm_o_out, self.hidden = self.lstm_o(o_embedded, self.hidden)
+        lstm_s_out, self.hidden = self.lstm(s_embedded, self.hidden)
+        lstm_o_out, self.hidden = self.lstm(o_embedded, self.hidden)
         
         s_embedded = lstm_s_out[-1]
         o_embedded = lstm_s_out[-1]
@@ -142,36 +305,16 @@ class LSTM_DistMult(torch.nn.Module):
         pred = torch.sum(s_embedded * p_embedded * o_embedded, 1)
         return pred
 
-    def log_loss(self, y_pred, y_true, average=True):
-        
-        norm_word = torch.norm(self.embed_words.weight, 2, 1)
-        norm_rel = torch.norm(self.embed_rel.weight, 2, 1)
-        loss = self.loss(y_pred, y_true)
-        # Penalize when embeddings norms larger than one
-        nlp1 = torch.sum(torch.clamp(norm_word - 1, min=0))
-        nlp2 = torch.sum(torch.clamp(norm_rel - 1, min=0))
-        if average:
-            nlp1 /= norm_word.size(0)
-            nlp2 /= norm_rel.size(0)
 
-        return loss + self.LW*nlp1 + self.LW*nlp2
-
-    def predict(self, score, sigmoid=False):
-        pred_score = score.view(-1, 1)
-        if sigmoid:
-            pred_prob = F.sigmoid(pred_score)
-        return pred_prob.cpu().data.numpy() if self.gpu else pred_prob.data.numpy()
-
-class LSTM_ERMLP(torch.nn.Module):
+class LSTM_ERMLP(Model):
     def __init__(self, embedding_dim, lstm_dim, embedding_rel_dim, mlp_hidden, weights, n_r, input_dropout=0.2, gpu=True):
-        super(DistMult, self).__init__()
+        super(LSTM_ERMLP, self).__init__(gpu)
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
         self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim, padding_idx=0)
         self.gpu = gpu
         self.batch_size = batch_size
-        self.lstm_dim = lstm_dim
-        self.lstm_s = nn.LSTM(embedding_dim, self.lstm_dim)
-        self.lstm_o = nn.LSTM(embedding_dim, self.lstm_dim)
+        self.embedding_rel_dim = embedding_rel_dim
+        self.lstm = nn.LSTM(embedding_dim, self.embedding_rel_dim)
         
         self.inp_drop = torch.nn.Dropout(input_dropout)
         self.loss = torch.nn.BCELoss()
@@ -188,8 +331,7 @@ class LSTM_ERMLP(torch.nn.Module):
 
     def init(self, weights):
         self.embed_words.weight.data.copy_(torch.from_numpy(weights))
-        xavier_normal(self.embed_rel.weight.data)
-        xavier_normal(self.embed_rel.bias.data)
+        xavier_normal_(self.embed_rel.weight.data)
         self.hidden = self.init_hidden()
         for p in self.mlp.modules():
             if isinstance(p, nn.Linear):
@@ -220,8 +362,8 @@ class LSTM_ERMLP(torch.nn.Module):
         o_embedded = self.embed_words(o)
         p_embedded = self.embed_rel(p)
 
-        lstm_s_out, self.hidden = self.lstm_s(s_embedded, self.hidden)
-        lstm_o_out, self.hidden = self.lstm_o(o_embedded, self.hidden)
+        lstm_s_out, self.hidden = self.lstm(s_embedded, self.hidden)
+        lstm_o_out, self.hidden = self.lstm(o_embedded, self.hidden)
         
         s_embedded = lstm_s_out[-1]
         o_embedded = lstm_s_out[-1]
@@ -229,26 +371,6 @@ class LSTM_ERMLP(torch.nn.Module):
         phi = torch.cat([s_embedded, o_embedded, p_embedded], 1)
         pred = self.mlp(pred)        
         return pred
-    
-    def log_loss(self, y_pred, y_true, average=True):
-        
-        norm_word = torch.norm(self.embed_words.weight, 2, 1)
-        norm_rel = torch.norm(self.embed_rel.weight, 2, 1)
-        loss = self.loss(y_pred, y_true)
-        # Penalize when embeddings norms larger than one
-        nlp1 = torch.sum(torch.clamp(norm_word - 1, min=0))
-        nlp2 = torch.sum(torch.clamp(norm_rel - 1, min=0))
-        if average:
-            nlp1 /= norm_word.size(0)
-            nlp2 /= norm_rel.size(0)
-
-        return loss + self.LW*nlp1 + self.LW*nlp2
-
-    def predict(self, score, sigmoid=False):
-        pred_score = score.view(-1, 1)
-        if sigmoid:
-            pred_prob = F.sigmoid(pred_score)
-        return pred_prob.cpu().data.numpy() if self.gpu else pred_prob.data.numpy()
 
 class ERMLP_avg(torch.nn.Module):
     def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, lw, batch_size, input_dropout=0.2, gpu=True):
@@ -284,9 +406,6 @@ class ERMLP_avg(torch.nn.Module):
                 in_dim = p.weight.size(0)
                 p.weight.data.normal_(0, 1/np.sqrt(in_dim/2))
 
-    def normalize_embeddings(self):
-        for e in self.embeddings:
-            e.weight.data.renorm_(p=2, dim=0, maxnorm=1)
 
     def forward(self, s, o, p):
         freq_s = Variable(torch.from_numpy(s.astype(bool).sum(axis=1)).type(torch.FloatTensor), requires_grad=False)
@@ -317,23 +436,3 @@ class ERMLP_avg(torch.nn.Module):
         phi = torch.cat([s_embedded, o_embedded, p_embedded], 1)
         pred = self.mlp(pred)
         return pred
-
-    def log_loss(self, y_pred, y_true, average=True):
-        
-        norm_word = torch.norm(self.embed_words.weight, 2, 1)
-        norm_rel = torch.norm(self.embed_rel.weight, 2, 1)
-        loss = self.loss(y_pred, y_true)
-        # Penalize when embeddings norms larger than one
-        nlp1 = torch.sum(torch.clamp(norm_word - 1, min=0))
-        nlp2 = torch.sum(torch.clamp(norm_rel - 1, min=0))
-        if average:
-            nlp1 /= norm_word.size(0)
-            nlp2 /= norm_rel.size(0)
-
-        return loss + self.LW*nlp1 + self.LW*nlp2
-
-    def predict(self, score, sigmoid=False):
-        pred_score = score.view(-1, 1)
-        if sigmoid:
-            pred_prob = F.sigmoid(pred_score)
-        return pred_prob.cpu().data.numpy() if self.gpu else pred_prob.data.numpy()
