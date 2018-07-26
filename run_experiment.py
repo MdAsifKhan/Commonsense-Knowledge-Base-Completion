@@ -1,12 +1,12 @@
 from torch.utils.data import DataLoader
-from utils import TripleDataset, sample_negatives, preprocess, stats
+from utils import TripleDataset, sample_negatives, preprocess
 from sklearn.utils import shuffle
 import torch.optim
 import numpy as np
 from model import DistMult
 from torch.autograd import Variable
-from evaluation import accuracy, auc, find_clf_threshold
-
+from evaluation import get_accuracy, auc, find_clf_threshold, stats
+import json
 import pdb
 
 np.random.seed(4086)
@@ -31,6 +31,15 @@ train_data = preprocessor.pad_idx_data(train_idx)
 
 pretrained_weights = preprocessor.embedding_matrix()
 embedding_dim = preprocessor.embedding_dim
+word_id_map = preprocessor.word_id_map
+rel_id_map = preprocessor.rel
+with open('data/word_id_map.dict','w') as f:
+	j = json.dumps(word_id_map)
+	f.write(j)
+with open('data/rel_id_map.dict','w') as f:
+	j = json.dumps(rel_id_map)
+	f.write(j)
+
 
 batch_size = 100
 # Embedding Normalization
@@ -51,11 +60,10 @@ test_idx = preprocessor.triple_to_index(test_triples, dev=True)
 test_data = preprocessor.pad_idx_data(test_idx, dev=True)
 test_label = test_data[3]
 test_data = test_data[0], test_data[1], test_data[2]
-pdb.set_trace()
 gpu = True
 embedding_rel_dim = 150
-model = DistMult(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=0.2, gpu=gpu)
-epochs = 100
+model = BilinearModel(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=0.2, gpu=gpu)
+epochs = 1000
 lr = 0.01
 #lr_decay_every = 10
 lr_decay = 1e-4
@@ -78,9 +86,8 @@ for epoch in range(epochs):
 		train_o = np.vstack([train_o, train_neg_o])
 		train_p = np.concatenate((train_p, train_neg_p))
 		train_s, train_o, train_p, train_label = shuffle(train_s, train_o, train_p, train_label, random_state=4086)
-
 		score = model.forward(train_s, train_o, train_p)
-		loss = model.log_loss(score, train_label, average=True)
+		loss = model.bce_loss(score, train_label, average=True)
 		loss.backward()
 		optimizer.step()
 		optimizer.zero_grad()
@@ -88,21 +95,19 @@ for epoch in range(epochs):
 
 	if epoch%10 == 0:
 		pred_score = model.predict(score, sigmoid=True)
-		train_acc = accuracy(pred_score, train_label, thresh=thresh)
 		score = score.cpu().data.numpy() if gpu else score.data.numpy()
 		train_auc_score = auc(score, train_label)
 		print('Epoch {0}\tTrain Loss value: {1}'.format(epoch, stats(epoch_loss)))
-		print('Epoch {0}\tTraining Accuracy: {1}'.format(epoch, train_acc))
 		print('Epoch {0}\tTraining AUC Score: {1}'.format(epoch, train_auc_score))
 
 		# Do evaluation on Dev Set		
 		valid_s, valid_o, valid_p = valid_data
 		score_val = model.forward(valid_s, valid_o, valid_p)
-		prob_val = model.predict(score_val, sigmoid=True)
-		thresh, val_acc = find_clf_threshold(prob_val, valid_label)
-		print('Threshold {0}'.format(thresh))
 		score_val = score_val.cpu().data.numpy() if gpu else score_val.data.numpy()
-		val_auc_score = auc(score_val, valid_label, thresh=thresh)
+		val_acc, thresh = find_clf_threshold(score_val)
+		
+		print('Threshold {0}'.format(thresh))
+		val_auc_score = auc(score_val, valid_label)
 
 		print('Epoch {0}\tValidation Accuracy: {1}'.format(epoch, val_acc))
 		print('Epoch {0}\tValidation AUC Score: {1}'.format(epoch, val_auc_score))	
@@ -110,10 +115,10 @@ for epoch in range(epochs):
 		# Do evaluation on Dev Set 2
 		test_s, test_o, test_p = test_data
 		score_test = model.forward(test_s, test_o, test_p)
-		prob_test = model.predict(score_test, sigmoid=True)
-		test_acc = accuracy(prob_test, test_label, thresh=thresh)
-
 		score_test = score_test.cpu().data.numpy() if gpu else score_test.data.numpy()
+		test_acc = get_accuracy(score_test, thresh)
+
+		#score_test = score_test.cpu().data.numpy() if gpu else score_test.data.numpy()
 		test_auc_score = auc(score_test, test_label)
 
 		print('Epoch {0}\tTest Accuracy: {1}'.format(epoch, test_acc))
