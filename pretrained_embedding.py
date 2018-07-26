@@ -5,6 +5,7 @@ import multiprocessing
 import sys
 from argparse import ArgumentParser, FileType, ArgumentDefaultsHelpFormatter
 
+
 def word2vec_omcs(args):
         input_file = args.corpus_file
         output_file = args.output_file
@@ -26,7 +27,7 @@ def main():
         parser.add_argument('--window_size', default=5, type=int, help='Window Size')
         parser.add_argument('--sg', type=int, default=0, help = 'Training Algorithm 0:CBOW 1:Skipgram')
 		
-		args = parser.parse_args()
+	args = parser.parse_args()
         word2vec_omcs(args)
 
 if __name__ == '__main__':
