@@ -14,32 +14,54 @@ We use ConceptNet as a representation of commonsense knowledge. All data used in
 
 # Usage
 The implementation is structured as follows.
+
 1. ```model.py ```
 
 Contains implementation of different neural networks for scoring a tuple. Currently we provide following models:
 * Bilinear Averaging Model
 * Bilinear LSTM Model
+* DistMult Averaging Model
+* DistMult LSTM Model
 * ER-MLP Averaging Model
 * ER-MLP LSTM Model
 
 2. ```utils.py```
+
 Implementation of preprocessing class, negative sampling and other basic utilities.
 Main class and functions:
 * class preprocess
+
 Implements method to read arbitrary phrase ConceptNet triples and convert them to token representation for training neural network models. 
+
 * function sample_negatives
+
 Implements negative sampling strategy. Sampling is done by alternatively corrupting head and tail of a triple.
+
 * class TripleDataset
+
 Data class to support with pytorch batch loader.
 
 3. ```evaluation.py```
-Contains implementation of different evaluation metric. For this project we mainly use auc score. The above file also implements other metric: mean rank, mean reciprocal rank and accuracy.
+
+Contains implementation of different evaluation metric. For this project we mainly use accuracy and auc score.
+
 
 4. ```pretrained_embedding.py```
+
 The scoring of tuple is highly dependent on initial embeddings used for training. To help model to better capture commonsense knowledge of ConceptNet we use pretraining. We create training data by combining ConceptNet tuples with natural language sentences of Open Mind Common Sense. 
 
 5. ```run_experiment.py```
+
 main file to evaluate neural network model for commonsense knowledge base completion.
+
+6. ```test_ConceptNet.py```
+
+Evaluate model on test set. Specify path of trained model as: 'models/ConceptNet/model.bin'
+
+7. ```evaluate_topfive.py```
+
+Realtime evaluation of arbitrary phrase. ex:
+
 
 # Requirements
 1. Pytorch
