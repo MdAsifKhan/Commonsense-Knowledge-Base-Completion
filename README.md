@@ -1,4 +1,4 @@
-## Commonsense Knowledge Base Reasoning 
+## Commonsense Knowledge Base Reasoning
 
 This repository implements course project as a part of NLP-Lab offered in Intelligent Systems track at University of Bonn.
 
@@ -52,15 +52,30 @@ The scoring of tuple is highly dependent on initial embeddings used for training
 
 5. ```run_experiment.py```
 
-main file to evaluate neural network model for commonsense knowledge base completion.
+main file to evaluate neural network model for commonsense knowledge base completion. All data must be in a folder ```data/ConceptNet/``` . To run the experiment parameters need to be specified by white space tuples ex:
+```
+python run_experiment.py --model BilinearAvg --train_file train100k.txt \
+		--valid_file dev1.txt --test_file dev2.txt --rel_file rel.txt \
+		--pretrained_weights_file embeddings.txt --k 150 --dropout_p 0.2 \
+		--mlp_hidden 100 --mb_size 200 --negative_samples 3 --nm_epoch 100 --lr 0.01 --lr_decay 1e-3 --weight_decay 1e-3 --embeddings_lambda 1e-2 
+```
 
 6. ```test_ConceptNet.py```
 
-Evaluate model on test set. Specify path of trained model as: 'models/ConceptNet/model.bin'
+Evaluate model on test set. Trained model should be in a path as: 'models/ConceptNet/model.bin'
+```
+python test_ConceptNet.py --model BilinearAvg --test_file 'dev2.txt' \
+		--rel_file 'rel.txt' --pretrained_weights_file 'embeddings.txt' --k 150 --dropout_p 0.2 --mb_size 200 --negative_samples 3 --nm_epoch 100 --lr 0.01 --lr_decay 1e-3 --weight_decay 1e-3 --embeddings_lambda 1e-2 
+```
 
 7. ```evaluate_topfive.py```
 
 Realtime evaluation of arbitrary phrase. ex:
+
+```
+python evaluate_topfive.py sub drive_fast pred accident eval_type topfive
+```
+
 
 
 # Requirements
