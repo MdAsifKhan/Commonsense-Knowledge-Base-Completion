@@ -307,7 +307,7 @@ class LSTM_DistMult(Model):
 
 
 class LSTM_ERMLP(Model):
-    def __init__(self, embedding_dim, lstm_dim, embedding_rel_dim, mlp_hidden, weights, n_r, input_dropout=0.2, gpu=True):
+    def __init__(self, embedding_dim, embedding_rel_dim, mlp_hidden, weights, n_r, input_dropout=0.2, gpu=True):
         super(LSTM_ERMLP, self).__init__(gpu)
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
         self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim, padding_idx=0)
@@ -373,7 +373,7 @@ class LSTM_ERMLP(Model):
         return pred
 
 class ERMLP_avg(torch.nn.Module):
-    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, lw, batch_size, input_dropout=0.2, gpu=True):
+    def __init__(self, embedding_dim, embedding_rel_dim, weights, mlp_hidden, n_r, lw, batch_size, input_dropout=0.2, gpu=True):
         super(DistMult, self).__init__()
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
         self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim, padding_idx=0)
