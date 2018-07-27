@@ -10,8 +10,8 @@ def word2vec_omcs(args):
         input_file = args.corpus_file
         output_file = args.output_file
         embedding = args.embedding_size
-		window = args.window_size
-		sg = args.sg
+	window = args.window_size
+	sg = args.sg
         iterations = args.iter
 
         model = Word2Vec(LineSentence(input_file), size=embedding, sg=sg, window=window, min_count=1, iter=iterations, workers=multiprocessing.cpu_count())
