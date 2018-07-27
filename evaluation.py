@@ -8,19 +8,7 @@ def accuracy(y_pred, y_true, thresh=0.5, reverse=False):
 
 def auc(y_pred, y_true):
     return roc_auc_score(y_true, y_pred)
-'''
-def find_clf_threshold(y_pred, y_true, reverse=False):
-    thresh = 0.0
-    best_acc = 0.0
-    score_sorted = sorted(y_pred)
-    pdb.set_trace()
-    for t in score_sorted:
-        acc = accuracy(y_pred, y_true, thresh=t, reverse=reverse)
-        if acc > best_acc:
-            thresh = t
-            best_acc = acc
-    return thresh, best_acc
-'''
+
 def find_clf_threshold(y_pred, reverse=False):
     thresh = 0.0
     accuracy = 0.0
@@ -88,7 +76,7 @@ def evaluate_model(sub_, obj_, word_id_map, rel_id_map, eval_type):
         sub_ = np.repeat(sub_, len(pred_))
         obj_ = np.repeat(obj_, len(pred_))
         score_ = model.forward(sub_, obj_, pred_)
-        prob_ = model.predict(score_)
+        prob_ = model.predict_proba(score_)
 
         if eval_type == 'topfive':
             sort_score = np.argsort(prob_)[:5]
