@@ -54,31 +54,42 @@ def get_accuracy(y_pred, thresh):
 def stats(values):
     return '{0:.4f} +/- {1:.4f}'.format(round(np.mean(values), 4), round(np.std(values), 4))
 
-def evaluate_model(sub_, obj_, word_id_map, rel_id_map, eval_type):
+
+def evaluate_model(sub_, obj_, model, maxlen_s, maxlen_o, word_id_map, rel_id_map, eval_type):
+    del_rels = ['HasPainIntensity','HasPainCharacter','LocationOfAction','LocatedNear',
+    'DesireOf','NotMadeOf','InheritsFrom','InstanceOf','RelatedTo','NotDesires',
+    'NotHasA','NotIsA','NotHasProperty','NotCapableOf']
+
+    for del_rel in del_rels:
+        if del_rel.lower() in rel_id_map:
+            del rel_id_map[del_rel.lower()]    
     id_rel_map = {v:k for k,v in rel_id_map.items()}
-    sub_ = sub_.strip().split(' ')
-    obj_ = pred_.strip().split(' ')
+    sub_ = sub_.strip().split('_')
+    obj_ = obj_.strip().split('_')
     count_s = [word for word in sub_ if word in word_id_map]
     count_o = [word for word in obj_ if word in word_id_map]
     if len(count_s) == 0 and len(count_p) == 0:
         print('No words in Vocabulary')
     elif len(count_s) == 0:
         print('All words in subject out of Vocabulary')
-    elif len(count_p) == 0:
+    elif len(count_o) == 0:
         print('All words in object out of Vocabulary')
     else:
         print('Words in subject found in Vocabulary',count_s)
-        print('Words in object found in Vocabulary',count_p)
+        print('Words in object found in Vocabulary',count_o)
         sub_ = np.array([word_id_map[word] if word in word_id_map else word_id_map['UUUNKKK'] for word in sub_])
-        obj_ = np.array([word_id_map[word] if word in word_id_map else word_id_map['UUUNKKK'] for word in sub_])
-        pred_ =np.array([rel_id for rel in rel_id_map.values()])
-
-        sub_ = np.repeat(sub_, len(pred_))
-        obj_ = np.repeat(obj_, len(pred_))
+        obj_ = np.array([word_id_map[word] if word in word_id_map else word_id_map['UUUNKKK'] for word in obj_])
+        pred_ =np.array([rel for rel in rel_id_map.values()])
+        sub_ = np.concatenate((sub_, np.zeros(maxlen_s-len(sub_))))
+        obj_ = np.concatenate((obj_, np.zeros(maxlen_o-len(obj_))))
+        sub_ = np.repeat(sub_.reshape(-1,len(sub_)), len(pred_), axis=0)
+        obj_ = np.repeat(obj_.reshape(-1,len(obj_)), len(pred_), axis=0)
         score_ = model.forward(sub_, obj_, pred_)
         prob_ = model.predict_proba(score_)
-
+        prob_ = prob_.reshape(-1, len(prob_))[0]
         if eval_type == 'topfive':
-            sort_score = np.argsort(prob_)[:5]
+            sort_score = np.argsort(prob_)[::-1]
+            sort_score = sort_score[:5]
             for id_ in sort_score:
-                print(id_rel_map[pred_[id_]], 'score: ', prob_[id_])
+                if id_rel_map[pred_[id_]]!= 'UUUNKKK':
+                    print(id_rel_map[pred_[id_]], 'score: ', prob_[id_])
