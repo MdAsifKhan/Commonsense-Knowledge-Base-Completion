@@ -103,7 +103,7 @@ class BilinearModel(Model):
         s = s.cuda() if self.gpu else s
         
         o = Variable(torch.from_numpy(o)).long()
-        o = s.cuda() if self.gpu else o
+        o = o.cuda() if self.gpu else o
         
         p = Variable(torch.from_numpy(p)).long()
         p = p.cuda() if self.gpu else p
@@ -117,26 +117,27 @@ class BilinearModel(Model):
         o_embedded = self.transform_term(o_embedded)
 
         s_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
-        o_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
-
-        p_embedded = self.embed_rel(p).view(-1, self.embedding_rel_dim, self.embedding_rel_dim)
+        o_embedded = o_embedded.view(-1, self.embedding_rel_dim, 1)
+        p_embedded = self.embed_rel(p)
+        p_embedded = p_embedded.view(-1, self.embedding_rel_dim, self.embedding_rel_dim)
 
         pred = torch.bmm(torch.transpose(s_embedded,1,2), p_embedded)
         pred = torch.bmm(pred, o_embedded)
         pred = pred.view(-1, 1)
-
         return pred
 
 
 class LSTM_BilinearModel(Model):
-    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, batch_size, input_dropout=0.2, gpu=True):
+    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, lw, batch_size, input_dropout=0.2, gpu=True):
         super(LSTM_BilinearModel, self).__init__(gpu)
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
         self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim**2, padding_idx=0)
         self.batch_size = batch_size
+        self.n_r = n_r
         self.embedding_rel_dim = embedding_rel_dim
-        self.lstm = nn.LSTM(embedding_dim, self.embedding_rel_dim)
-        
+        self.lstm_s = nn.LSTM(embedding_dim, self.embedding_rel_dim)
+        self.lstm_o = nn.LSTM(embedding_dim, self.embedding_rel_dim)
+        self.LW = lw
         self.inp_drop = torch.nn.Dropout(input_dropout)
         self.loss = torch.nn.BCELoss()
         self.init(weights)
@@ -148,7 +149,8 @@ class LSTM_BilinearModel(Model):
         self.embed_words.weight.data.copy_(torch.from_numpy(weights))
         rel_mat = self.bilinear_initialization()
         self.embed_rel.weight.data.copy_(torch.from_numpy(rel_mat))
-        self.hidden = self.init_hidden()
+        self.hidden1 = self.init_hidden()
+        self.hidden2 = self.init_hidden()
 
     def init_hidden(self):
         # the first is the hidden h
@@ -174,14 +176,17 @@ class LSTM_BilinearModel(Model):
         o_embedded = self.embed_words(o)
         p_embedded = self.embed_rel(p)
 
-        lstm_s_out, self.hidden = self.lstm(s_embedded, self.hidden)
-        lstm_o_out, self.hidden = self.lstm(o_embedded, self.hidden)
+        s_embedded = s_embedded.view(self.maxlen_s, self.batch_size, -1)
+        o_embedded = o_embedded.view(self.maxlen_s, self.batch_size, -1)
+
+        lstm_s_out, self.hidden1 = self.lstm(s_embedded, self.hidden1)
+        lstm_o_out, self.hidden2 = self.lstm(o_embedded, self.hidden2)
         
         s_embedded = lstm_s_out[-1]
-        o_embedded = lstm_s_out[-1]
+        o_embedded = lstm_o_out[-1]
 
         s_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
-        o_embedded = s_embedded.view(-1, self.embedding_rel_dim, 1)
+        o_embedded = o_embedded.view(-1, self.embedding_rel_dim, 1)
 
         p_embedded = self.embed_rel(p).view(-1, self.embedding_rel_dim, self.embedding_rel_dim)
 
@@ -200,6 +205,8 @@ class Avg_DistMult(Model):
         self.batch_size = batch_size
         self.inp_drop = torch.nn.Dropout(input_dropout)
         self.loss = torch.nn.BCELoss()
+        self.n_r = n_r
+
         self.gpu = gpu
         self.LW = lw
         self.transform_term = nn.Sequential(
@@ -230,7 +237,7 @@ class Avg_DistMult(Model):
         s = s.cuda() if self.gpu else s
         
         o = Variable(torch.from_numpy(o)).long()
-        o = s.cuda() if self.gpu else o
+        o = o.cuda() if self.gpu else o
         
         p = Variable(torch.from_numpy(p)).long()
         p = p.cuda() if self.gpu else p
@@ -252,13 +259,16 @@ class Avg_DistMult(Model):
 
 
 class LSTM_DistMult(Model):
-    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, batch_size, input_dropout=0.2, gpu=True):
+    def __init__(self, embedding_dim, embedding_rel_dim, weights, n_r, lw, batch_size, input_dropout=0.2, gpu=True):
         super(LSTM_DistMult, self).__init__(gpu)
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
         self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim, padding_idx=0)
         self.batch_size = batch_size
         self.embedding_rel_dim = embedding_rel_dim
-        self.lstm = nn.LSTM(embedding_dim, self.embedding_rel_dim)
+        self.lstm_s = nn.LSTM(embedding_dim, self.embedding_rel_dim)
+        self.lstm_o = nn.LSTM(embedding_dim, self.embedding_rel_dim)
+        self.LW = lw
+        self.n_r = n_r
         
         self.inp_drop = torch.nn.Dropout(input_dropout)
         self.loss = torch.nn.BCELoss()
@@ -270,7 +280,8 @@ class LSTM_DistMult(Model):
     def init(self, weights):
         self.embed_words.weight.data.copy_(torch.from_numpy(weights))
         xavier_normal_(self.embed_rel.weight.data)
-        self.hidden = self.init_hidden()
+        self.hidden1 = self.init_hidden()
+        self.hidden2 = self.init_hidden()
 
     def init_hidden(self):
         # the first is the hidden h
@@ -295,19 +306,21 @@ class LSTM_DistMult(Model):
         s_embedded = self.embed_words(s)
         o_embedded = self.embed_words(o)
         p_embedded = self.embed_rel(p)
-
-        lstm_s_out, self.hidden = self.lstm(s_embedded, self.hidden)
-        lstm_o_out, self.hidden = self.lstm(o_embedded, self.hidden)
+        s_embedded = s_embedded.view(self.maxlen_s, self.batch_size, -1)
+        o_embedded = o_embedded.view(self.maxlen_s, self.batch_size, -1)
+        
+        lstm_s_out, self.hidden1 = self.lstm(s_embedded, self.hidden1)
+        lstm_o_out, self.hidden2 = self.lstm(o_embedded, self.hidden2)
         
         s_embedded = lstm_s_out[-1]
-        o_embedded = lstm_s_out[-1]
+        o_embedded = lstm_o_out[-1]
 
         pred = torch.sum(s_embedded * p_embedded * o_embedded, 1)
         return pred
 
 
 class LSTM_ERMLP(Model):
-    def __init__(self, embedding_dim, embedding_rel_dim, mlp_hidden, weights, n_r, input_dropout=0.2, gpu=True):
+    def __init__(self, embedding_dim, embedding_rel_dim, mlp_hidden, weights, lw, n_r, input_dropout=0.2, gpu=True):
         super(LSTM_ERMLP, self).__init__(gpu)
         self.embed_words = torch.nn.Embedding(len(weights), embedding_dim, padding_idx=0)
         self.embed_rel = torch.nn.Embedding(n_r, embedding_rel_dim, padding_idx=0)
@@ -315,6 +328,8 @@ class LSTM_ERMLP(Model):
         self.batch_size = batch_size
         self.embedding_rel_dim = embedding_rel_dim
         self.lstm = nn.LSTM(embedding_dim, self.embedding_rel_dim)
+        self.LW = lw
+        self.n_r = n_r
         
         self.inp_drop = torch.nn.Dropout(input_dropout)
         self.loss = torch.nn.BCELoss()
