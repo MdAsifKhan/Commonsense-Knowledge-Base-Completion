@@ -22,6 +22,7 @@ parser.add_argument('--pred', required=True, metavar='',
 parser.add_argument('--eval_type', default='topfive', metavar='',
 					help='Type of evaluation')
 
+args = parser.parse_args()
 
 np.random.seed(4086)
 torch.manual_seed(4086)
@@ -30,7 +31,8 @@ gpu = True
 embedding_rel_dim = 150
 embedding_dim = 200
 
-
+maxlen_s = 20
+maxlen_o = 25
 sub_ = args.sub
 pred_ = args.pred
 eval_type = args.eval_type
