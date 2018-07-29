@@ -6,7 +6,7 @@ This project implements neural network based models to score Knowledge Base tupl
 Here main focus is on commonsense knowledge base. In standard KB each triple is a tuple of form $(subject,predicate,object)$ and subject,predicate and object are represented by a unique token. In contrast to standard KB here subject and object are an arbitrary phrases thus represented by set of tokens.
 
 For further detail on methods, evaluation setup and results refer to 
-[report.ipynb](https://github.com/MdAsifKhan/NLP-Project)
+[report.ipynb](https://github.com/MdAsifKhan/NLP-Project/report.ipynb)
 
 # Dataset
 We use ConceptNet as a representation of commonsense knowledge. All data used in this experiment can be downloaded from: (http://ttic.uchicago.edu/~kgimpel/commonsense.html).
