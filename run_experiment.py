@@ -38,8 +38,8 @@ parser.add_argument('--dropout_p', type=float, default=0.2, metavar='',
 					help='Probability of dropping out neuron (default: 0.2)')
 parser.add_argument('--mlp_hidden', type=int, default=100, metavar='',
 					help='size of ER-MLP hidden layer (default: 100)')
-parser.add_argument('--mb_size', type=int, default=100, metavar='',
-					help='size of minibatch (default: 100)')
+parser.add_argument('--mb_size', type=int, default=50, metavar='',
+					help='size of minibatch (default: 50)')
 parser.add_argument('--negative_samples', type=int, default=3, metavar='',
 					help='number of negative samples per positive sample  (default: 3)')
 parser.add_argument('--nm_epoch', type=int, default=1000, metavar='',
@@ -56,7 +56,7 @@ parser.add_argument('--normalize_embed', default=False, type=bool, metavar='',
 					help='whether to normalize embeddings to unit euclidean ball (default: False)')
 parser.add_argument('--checkpoint_dir', default='models/', metavar='',
 					help='directory to save model checkpoint, saved every epoch (default: models/)')
-parser.add_argument('--use_gpu', default=True, action='store_true',
+parser.add_argument('--use_gpu', default=False, action='store_true',
 					help='whether to run in the GPU')
 
 args = parser.parse_args()
@@ -92,11 +92,11 @@ train_idx = preprocessor.triple_to_index(train_triples)
 preprocessor.get_max_len(train_idx)
 train_data = preprocessor.pad_idx_data(train_idx)
 
-
 pretrained_weights = preprocessor.embedding_matrix()
 embedding_dim = preprocessor.embedding_dim
 word_id_map = preprocessor.word_id_map
 rel_id_map = preprocessor.rel
+np.save(DATA_ROOT + 'pretrained_weights.npy',pretrained_weights)
 
 with open(DATA_ROOT + 'word_id_map.dict','w') as f:
 	j = json.dumps(word_id_map)
@@ -138,18 +138,22 @@ normalize_embed = args.normalize_embed
 thresh = 0.5
 #Batch Data Loader
 train_loader = DataLoader(TripleDataset(train_data), batch_size=batch_size,shuffle=True, num_workers=4)
-
+lstm_ = False
+batch_size = batch_size + (batch_size*2)*sampling_factor
 # Model
 if args.model == 'BilinearAvg':
 	model = BilinearModel(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=dropout_p, gpu=gpu)
 elif args.model == 'BilinearLstm':
+	lstm_ = True
 	model = LSTM_BilinearModel(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=dropout_p, gpu=gpu)
 elif args.model == 'DistMultAvg':
 	model = Avg_DistMult(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=dropout_p, gpu=gpu)	
 elif args.model == 'DistMultLstm':
 	model = LSTM_DistMult(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=dropout_p, gpu=gpu)
+	lstm_ = True
 elif args.model == 'ErmlpLstm':
 	model = LSTM_ERMLP(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, mlp_hidden=mlp_hidden, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=dropout_p, gpu=gpu)
+	lstm_ = True
 elif args.model == 'ErmlpAvg':
 	model = ERMLP_avg(embedding_dim=embedding_dim, embedding_rel_dim=embedding_rel_dim, mlp_hidden=mlp_hidden, weights=pretrained_weights, n_r=n_r, lw=lw, batch_size=batch_size, input_dropout=dropout_p, gpu=gpu)
 else:
@@ -163,8 +167,9 @@ for epoch in range(epochs):
 	epoch_loss = []
 	#lr_n = lr * (0.5 ** (epoch // lr_decay_every))
 	for i, train_positive_data in enumerate(train_loader,0):
-		optimizer.zero_grad()
-
+		model.zero_grad()
+		if lstm_:
+			model.init_hidden()
 		train_s, train_o, train_p = train_positive_data
 		train_negative_data = sample_negatives(train_positive_data, sampling_factor=sampling_factor)
 		train_neg_s, train_neg_o, train_neg_p = train_negative_data
