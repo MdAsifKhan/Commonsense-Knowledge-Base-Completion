@@ -8,6 +8,7 @@ Here main focus is on commonsense knowledge base. In standard KB each triple is 
 For further detail on methods, evaluation setup and results refer to 
 [report.ipynb](https://github.com/MdAsifKhan/NLP-Project/report.ipynb)
 
+Trained Bilinear Averaging Model can be downloaded from [here](https://drive.google.com/file/d/1xbj9iD-Gw_8Y3j15ImwsEHkh_zT6JvAN/view?usp=sharing).
 # Dataset
 We use ConceptNet as a representation of commonsense knowledge. All data used in this experiment can be downloaded from: (http://ttic.uchicago.edu/~kgimpel/commonsense.html).
 
